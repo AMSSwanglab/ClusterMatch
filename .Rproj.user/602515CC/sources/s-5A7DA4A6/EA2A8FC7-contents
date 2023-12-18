@@ -1,0 +1,19 @@
+library(usethis)
+library(devtools)
+library(roxygen2)
+
+#检查
+has_devel()
+
+#开发包
+setwd("/Users/bingbao/Desktop/paper_R_package /ClusterMatch/")
+
+usethis::create_package("ClusterMatch")
+devtools::document()
+library(usethis)
+use_package(package = "Seurat")
+use_package(package = "dplyr")
+use_package(package = "stringr")
+use_package(package = "umap")
+use_package(package = "reshape2")
+use_package(package = "matrixStats")

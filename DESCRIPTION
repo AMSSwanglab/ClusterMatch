@@ -1,0 +1,21 @@
+Package: ClusterMatch
+Title: ClusterMatch aligns single-cell RNA-seqencing data at the multi-scale cluster level via stable matching
+Version: 0.0.1
+Authors@R: 
+    person(given = "Teer",
+           family = "Ba",
+           role = c("aut", "cre"),
+           email = "32036005@mail.imu.edu.cn")
+Description: ClusterMatch is an optimization model designed for aligning scRNA-seq data at the mutually optimal cluster level.
+License: Artistic-2.0
+Encoding: UTF-8
+Language: English
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.1
+Imports: 
+    dplyr (>= 1.0.0),
+    matrixStats (>= 1.0.0),
+    reshape2 (>= 1.4.4),
+    Seurat (>= 3.0.0),
+    stringr (>= 1.5.0),
+    umap (>= 0.2.9.0)

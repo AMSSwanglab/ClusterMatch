@@ -1,0 +1,193 @@
+#' Matching clusters and cell types
+#' @param data the correlation between clusters and cell types
+#' @param threshold the minimum threshold for matching
+#' @return the matching matrix of clusters and cell types
+#' @importFrom matrixStats rowMaxs
+
+
+
+Match_annotation<-function(data,threshold=0){
+  data<-as.matrix(data)
+  row_max<-matrixStats::rowMaxs(data)
+  match_matrix<-data
+  for (i in 1:nrow(data)) {
+    for (j in 1:ncol(data)) {
+      if (data[i,j] == row_max[i] & data[i,j]>threshold) {
+        match_matrix[i,j]<-1
+      }
+      else
+        match_matrix[i,j]<-0
+    }
+
+  }
+
+  return(match_matrix)
+
+}
+
+
+#' Annotate the query data based on the reference data labels
+#' @param reference_matrix the gene expression matrix of reference
+#' @param query_matrix the gene expression matrix of query
+#' @param reference_label reference data labels
+#' @param que.res the query clustering resolution, default 2
+#' @param ref.norm whether reference is normalized
+#' @param que.norm whether query is normalized
+#' @param dim.pca number of PCs to calculate (50 by default)
+#' @param dim.cca number of canonical vectors to calculate (30 by default)
+#' @param min.cluster.cells the minimum number of cells in a cluster
+#' @param random_PCC the minimum value of random noise
+#' @return a list containing the following elements:
+#' - D1_reference: SeuratObject of reference
+#' - D2_query: SeuratObject of query
+#' - Matching_matrix: Matching matrix of cell types and clusters
+#' @importFrom Seurat CreateSeuratObject NormalizeData ScaleData RunPCA FindNeighbors FindClusters RunCCA L2Dim SplitObject FindAllMarkers Idents
+#' @importFrom dplyr select left_join
+#' @importFrom stringr str_c
+#' @importFrom reshape2 melt
+#' @export
+
+ClusterMatch_annotation <- function(reference_matrix, query_matrix, reference_label, que.res=2, ref.norm = TRUE, que.norm = TRUE,
+                                  dim.pca = 50, dim.cca = 30, min.cluster.cells = 20, random_PCC = 0){
+  #object and clustering
+  reference <- Seurat::CreateSeuratObject(counts = reference_matrix, meta.data = reference_label)
+  if (ref.norm == TRUE) {
+    reference <- Seurat::NormalizeData(reference)
+  }
+  reference <- Seurat::FindVariableFeatures(reference, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+  reference <- Seurat::ScaleData(reference, verbose = FALSE)
+  reference <- Seurat::RunPCA(reference, features = Seurat::VariableFeatures(object = reference), verbose = FALSE)
+
+
+  query <- Seurat::CreateSeuratObject(counts = query_matrix)
+  if (que.norm == TRUE) {
+    query <- Seurat::NormalizeData(query)
+  }
+  query <- Seurat::FindVariableFeatures(query, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+  query <- Seurat::ScaleData(query, verbose = FALSE)
+  query <- Seurat::RunPCA(query, features = Seurat::VariableFeatures(object = query), verbose = FALSE)
+  query <- Seurat::FindNeighbors(query, dims = 1:dim.pca, verbose = FALSE)
+  query <- Seurat::FindClusters(query, resolution = que.res)
+  query@meta.data$name <- "D2_"
+  query$seurat_clusters <- stringr::str_c(query$name,query$seurat_clusters)
+  query@meta.data <- dplyr::select(query@meta.data, -c("name"))
+  query_cells <- rownames(query@meta.data)
+
+  #CCA embedding
+  CCA <- Seurat::RunCCA(object1 = reference, object2 = query, num.cc = dim.cca)
+  L2CCA <- Seurat::L2Dim(CCA, reduction = "cca")
+  embedding <- L2CCA@reductions[["cca.l2"]]@cell.embeddings
+  embedding <- data.frame(cbind(cells=rownames(embedding), embedding))
+
+  #CCA cluster representation
+  #reference
+  reference_cluster <- Seurat::SplitObject(reference, split.by = "celltype")
+  reference_means <- data.frame()
+  reference_cell_cluster_embedding <- list()
+  for (i in 1:length(reference_cluster)) {
+    cluster_name <- names(reference_cluster)[i]
+    cluster_cell <- data.frame(cells = rownames(reference_cluster[[i]]@meta.data))
+    cluster_embedding <- dplyr::left_join(cluster_cell, embedding, by="cells")
+    rownames(cluster_embedding) <- cluster_embedding[, 1]
+    cluster_embedding <- cluster_embedding[, -1]
+    reference_cell_cluster_embedding[[i]] <- as.data.frame(lapply(cluster_embedding, as.numeric))
+    rownames(reference_cell_cluster_embedding[[i]]) <- cluster_cell$cells
+    reference_cell_cluster_embedding[[i]] <- t(reference_cell_cluster_embedding[[i]])
+    names(reference_cell_cluster_embedding)[i] <- cluster_name
+    cluster_embedding <- as.data.frame(lapply(cluster_embedding, as.numeric))
+    cluster_vec <- colMeans(cluster_embedding)
+    cluster_vec <- data.frame(cluster_vec)
+    colnames(cluster_vec)[1] <- cluster_name
+    if (i==1) {
+      reference_means <- cluster_vec
+    }
+    else
+      reference_means <- cbind(reference_means, cluster_vec)
+  }
+  #query
+  query_cluster <- Seurat::SplitObject(query, split.by = "seurat_clusters")
+  query_means <- data.frame()
+  query_cell_cluster_embedding <- list()
+  for (i in 1:length(query_cluster)) {
+    cluster_name <- names(query_cluster)[i]
+    cluster_cell <- data.frame(cells = rownames(query_cluster[[i]]@meta.data))
+    cluster_embedding <- dplyr::left_join(cluster_cell, embedding, by="cells")
+    rownames(cluster_embedding) <- cluster_embedding[, 1]
+    cluster_embedding <- cluster_embedding[, -1]
+    query_cell_cluster_embedding[[i]] <- as.data.frame(lapply(cluster_embedding, as.numeric))
+    rownames(query_cell_cluster_embedding[[i]]) <- cluster_cell$cells
+    query_cell_cluster_embedding[[i]] <- t(query_cell_cluster_embedding[[i]])
+    names(query_cell_cluster_embedding)[i] <- cluster_name
+    cluster_embedding <- as.data.frame(lapply(cluster_embedding, as.numeric))
+    cluster_vec <- colMeans(cluster_embedding)
+    cluster_vec <- data.frame(cluster_vec)
+    colnames(cluster_vec)[1] <- cluster_name
+    if (i==1) {
+      query_means<-cluster_vec
+
+    }
+    else
+      query_means<-cbind(query_means, cluster_vec)
+
+  }
+
+  #marker cluster representation
+  #reference
+  Seurat::Idents(object = reference) <- reference@meta.data$celltype
+  reference_marker <- Seurat::FindAllMarkers(reference, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  reference_marker_cluster <- split(reference_marker, reference_marker$cluster)
+  #query
+  Seurat::Idents(object = query) <- query@meta.data$seurat_clusters
+  query_marker <- Seurat::FindAllMarkers(query, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  query_marker_cluster <- split(query_marker,query_marker$cluster)
+
+  #correlation of clusters
+  #CCA
+  CCA_PCC <- cor(query_means,reference_means)
+  CCA_PCC[CCA_PCC<0] <- 0
+  #marker
+  jaccard <- function(a, b) {
+    intersection = length(intersect(a, b))
+    union = length(a) + length(b) - intersection
+    return (intersection/union)
+  }
+
+  marker_jaccard<-data.frame()
+  for (i in 1:length(query_marker_cluster)) {
+    for (j in 1:length(reference_marker_cluster)) {
+      marker_jaccard[i,j] <- jaccard(query_marker_cluster[[i]]$gene,reference_marker_cluster[[j]]$gene)
+
+    }
+
+  }
+  rownames(marker_jaccard)<-names(query_marker_cluster)
+  colnames(marker_jaccard)<-names(reference_marker_cluster)
+  marker_jaccard[marker_jaccard=='NaN']<-0
+
+  #Epsilon and beta
+  reference_all_means <- embedding[1:ncol(reference_matrix), ]
+  reference_all_means <- reference_all_means[, -1]
+  reference_all_means <- as.data.frame(lapply(reference_all_means, as.numeric))
+  reference_all_means_vec <- colMeans(reference_all_means)
+  query_all_means <- embedding[(ncol(reference_matrix)+1):nrow(embedding), ]
+  query_all_means <- query_all_means[, -1]
+  query_all_means <- as.data.frame(lapply(query_all_means, as.numeric))
+  query_all_means_vec <- colMeans(query_all_means)
+  Epsilon <- cor(reference_all_means_vec, query_all_means_vec)
+  beta <- max(CCA_PCC)/max(marker_jaccard)
+  Epsilon <- max(Epsilon, random_PCC)
+  CCA_marker_similarity <- CCA_PCC + beta*marker_jaccard
+  CCA_marker_similarity[CCA_marker_similarity < Epsilon] <- 0
+  match_predict_matrix<-Match_annotation(data = CCA_marker_similarity)
+  match_predict_matrix_melt<-reshape2::melt(match_predict_matrix)
+  match_predict_matrix_melt<-subset(match_predict_matrix_melt,match_predict_matrix_melt$value>0)
+  match_predict_matrix_melt<-match_predict_matrix_melt[,1:2]
+  colnames(match_predict_matrix_melt)<-c("seurat_clusters","predicted_celltypes")
+  query@meta.data<-dplyr::left_join(query@meta.data,match_predict_matrix_melt)
+  query@meta.data$predicted_celltypes <- as.character(query@meta.data$predicted_celltypes)
+  query@meta.data[is.na(query@meta.data)]<-'unknown'
+  rownames(query@meta.data)<-query_cells
+
+  #output
+  ClusterMatch_transfer <- list(D1_reference = reference, D2_query = query, Matching_matrix = match_predict_matrix)
+}
